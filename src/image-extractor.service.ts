@@ -224,21 +224,17 @@ export class ImageExtractorService {
         urlsToDownload = uniqueUrls; // Use uniqueUrls for download
       }
 
-      const downloadedImages = await this.imageDownloadService.downloadImages(
+      // Categorizar URLs de imágenes sin descargar
+      const categorizedResults = await this.categorizeImageUrls(
         urlsToDownload,
-        outputDirectory || './downloads'
-      );
-
-      const categorizedImages = await this.imageCategoryService.categorizeImages(
-        downloadedImages,
-        visualAnalysis
+        visualAnalysis || false
       );
 
       return {
         url,
         totalImages: filteredUrls.length,
-        downloadedImages: downloadedImages.length,
-        categories: categorizedImages,
+        downloaded: urlsToDownload.length,
+        categories: categorizedResults,
         timestamp: new Date().toISOString(),
       };
 
@@ -264,6 +260,190 @@ export class ImageExtractorService {
     }
 
     return false;
+  }
+
+  private async categorizeImageUrls(imageUrls: string[], visualAnalysis: boolean): Promise<any[]> {
+    this.logger.log(`Categorizing ${imageUrls.length} image URLs (visual analysis: ${visualAnalysis})`);
+    
+    const categories: { [key: string]: string[] } = {};
+    let processedCount = 0;
+    
+    // Process URLs in batches
+    const batchSize = 10;
+    
+    for (let i = 0; i < imageUrls.length; i += batchSize) {
+      const batch = imageUrls.slice(i, i + batchSize);
+      
+      this.logger.log(`Processing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(imageUrls.length/batchSize)} (${batch.length} URLs)`);
+      
+      // Process batch concurrently
+      const batchPromises = batch.map(async (url) => {
+        try {
+          const category = await this.analyzeImageUrlCategory(url, visualAnalysis);
+          processedCount++;
+          
+          this.logger.log(`[${processedCount}/${imageUrls.length}] ${url} -> ${category}`);
+          
+          return { url, category, error: null };
+        } catch (error) {
+          this.logger.error(`Failed to analyze ${url}: ${error.message}`);
+          const fallbackCategory = this.categorizeUrlByHeuristics(url);
+          processedCount++;
+          
+          this.logger.log(`[${processedCount}/${imageUrls.length}] ${url} -> ${fallbackCategory} (fallback)`);
+          
+          return { url, category: fallbackCategory, error: error.message };
+        }
+      });
+      
+      const batchResults = await Promise.all(batchPromises);
+      
+      // Add to categories
+      for (const { url, category } of batchResults) {
+        if (!categories[category]) {
+          categories[category] = [];
+        }
+        categories[category].push(url);
+      }
+      
+      // Small delay between batches
+      if (i + batchSize < imageUrls.length) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    }
+
+    // Convert to response format
+    const results: Array<{
+      category: string;
+      images: Array<{
+        originalUrl: string;
+        filename: string;
+        width: null;
+        height: null;
+        size: null;
+        format: string;
+        localPath: null;
+      }>;
+      folderPath: string;
+    }> = [];
+    
+    for (const [category, urls] of Object.entries(categories)) {
+      results.push({
+        category,
+        images: urls.map((url, index) => ({
+          originalUrl: url,
+          filename: this.generateFilename(url, index),
+          width: null,
+          height: null,
+          size: null,
+          format: this.getFormatFromUrl(url),
+          localPath: null
+        })),
+        folderPath: category
+      });
+      
+      this.logger.log(`Category '${category}': ${urls.length} images`);
+    }
+
+    this.logger.log(`Categorization complete: ${processedCount} URLs processed`);
+    this.logger.log(`Created ${results.length} categories: ${Object.keys(categories).join(', ')}`);
+    
+    return results;
+  }
+
+  private async analyzeImageUrlCategory(url: string, useVisualAnalysis: boolean): Promise<string> {
+    try {
+      if (useVisualAnalysis) {
+        // For URL-based analysis, we'll use heuristics for now
+        // Could be enhanced to fetch image and analyze with AI in the future
+        this.logger.log(`Using heuristics for ${url} (URL-only analysis)`);
+        return this.categorizeUrlByHeuristics(url);
+      }
+      
+      return this.categorizeUrlByHeuristics(url);
+      
+    } catch (error) {
+      this.logger.warn(`URL categorization failed for ${url}, using heuristics: ${error.message}`);
+      return this.categorizeUrlByHeuristics(url);
+    }
+  }
+
+  private categorizeUrlByHeuristics(url: string): string {
+    const urlLower = url.toLowerCase();
+    
+    if (this.containsKeywords([urlLower], ['person', 'people', 'face', 'portrait', 'human'])) {
+      return 'people';
+    }
+    
+    if (this.containsKeywords([urlLower], [
+      'nature', 'landscape', 'animal', 'plant', 'tree', 'flower', 'mountain', 'forest',
+      'garden', 'botanical', 'green', 'leaf', 'leaves', 'foliage', 'vegetation',
+      'flora', 'herb', 'shrub', 'bush', 'grass', 'meadow', 'wildflower',
+      'palm', 'fern', 'moss', 'vine', 'cactus', 'succulent', 'bamboo',
+      'outdoor', 'natural', 'organic', 'eco', 'environment', 'wildlife'
+    ])) {
+      return 'nature';
+    }
+    
+    if (this.containsKeywords([urlLower], ['product', 'item', 'object', 'tool', 'device'])) {
+      return 'objects';
+    }
+    
+    if (this.containsKeywords([urlLower], ['building', 'architecture', 'house', 'structure', 'interior'])) {
+      return 'architecture';
+    }
+    
+    if (this.containsKeywords([urlLower], ['food', 'meal', 'drink', 'restaurant', 'cooking'])) {
+      return 'food';
+    }
+    
+    if (this.containsKeywords([urlLower], ['tech', 'computer', 'phone', 'electronic', 'gadget'])) {
+      return 'technology';
+    }
+    
+    if (this.containsKeywords([urlLower], ['art', 'painting', 'drawing', 'creative', 'design'])) {
+      return 'art';
+    }
+    
+    return 'other';
+  }
+
+  private containsKeywords(sources: string[], keywords: string[]): boolean {
+    return keywords.some(keyword => 
+      sources.some(source => source.includes(keyword))
+    );
+  }
+
+  private generateFilename(url: string, index: number): string {
+    const urlParts = url.split('/');
+    const filename = urlParts[urlParts.length - 1] || `image_${index}`;
+    
+    // Remove query parameters and hash
+    const cleanFilename = filename.split('?')[0].split('#')[0];
+    
+    // Add extension if missing
+    if (!cleanFilename.includes('.')) {
+      return `${cleanFilename}.jpg`;
+    }
+    
+    return cleanFilename;
+  }
+
+  private getFormatFromUrl(url: string): string {
+    const extension = url.split('.').pop()?.toLowerCase().split('?')[0];
+    
+    const formatMap: { [key: string]: string } = {
+      'jpg': 'jpeg',
+      'jpeg': 'jpeg',
+      'png': 'png',
+      'gif': 'gif',
+      'webp': 'webp',
+      'svg': 'svg',
+      'bmp': 'bmp',
+      'tiff': 'tiff'
+    };
+    
+    return formatMap[extension || 'jpg'] || 'jpeg';
   }
 
   private async extractImagesFromLinks($: any, baseUrl: string, maxImages?: number): Promise<string[]> {

@@ -9,47 +9,94 @@ class ImageExtractorApp {
     }
 
     initializeEventListeners() {
-        // Navigation
-        document.querySelectorAll('.nav-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => this.switchMainView(e.target.dataset.view));
-        });
-
         // Form
         const form = document.getElementById('extractForm');
         if (form) {
             form.addEventListener('submit', (e) => this.handleExtractSubmit(e));
         }
 
+        // Quick Settings - Sync with hidden advanced inputs
+        const maxImagesQuick = document.getElementById('maxImagesQuick');
+        const maxImages = document.getElementById('maxImages');
+        if (maxImagesQuick && maxImages) {
+            maxImagesQuick.addEventListener('change', (e) => {
+                maxImages.value = e.target.value;
+                this.saveSetting('maxImages', e.target.value);
+            });
+            
+            // Initialize with saved value
+            const savedMaxImages = this.settings.maxImages || 50;
+            maxImagesQuick.value = savedMaxImages;
+            maxImages.value = savedMaxImages;
+        }
+
+        const aiMethodQuick = document.getElementById('aiMethodQuick');
+        const aiMethod = document.getElementById('aiMethod');
+        if (aiMethodQuick && aiMethod) {
+            aiMethodQuick.addEventListener('change', (e) => {
+                aiMethod.value = e.target.value;
+                this.saveSetting('aiMethod', e.target.value);
+            });
+            
+            // Initialize with saved value
+            const savedAiMethod = this.settings.aiMethod || 'heuristics';
+            aiMethodQuick.value = savedAiMethod;
+            aiMethod.value = savedAiMethod;
+        }
+
+        const visualAnalysisQuick = document.getElementById('visualAnalysisQuick');
+        const visualAnalysis = document.getElementById('visualAnalysis');
+        if (visualAnalysisQuick && visualAnalysis) {
+            visualAnalysisQuick.addEventListener('change', (e) => {
+                visualAnalysis.value = e.target.value;
+                this.saveSetting('visualAnalysis', e.target.value);
+            });
+            
+            // Initialize with saved value
+            const savedVisualAnalysis = this.settings.visualAnalysis || false;
+            visualAnalysisQuick.value = savedVisualAnalysis.toString();
+            visualAnalysis.value = savedVisualAnalysis.toString();
+        }
+
+        // Advanced Toggle
+        const advancedToggle = document.querySelector('.advanced-toggle');
+        const advancedContent = document.querySelector('.advanced-content');
+        if (advancedToggle && advancedContent) {
+            advancedToggle.addEventListener('click', () => {
+                const isVisible = advancedContent.style.display !== 'none';
+                advancedContent.style.display = isVisible ? 'none' : 'block';
+                advancedToggle.classList.toggle('active', !isVisible);
+            });
+        }
+
         // Buttons
         const newExtractionBtn = document.getElementById('newExtractionBtn');
-        const toggleViewBtn = document.getElementById('toggleViewBtn');
         const downloadAllBtn = document.getElementById('downloadAllBtn');
-        const optionsToggle = document.querySelector('.options-toggle');
-        const clearChatBtn = document.querySelector('.clear-chat-btn');
 
         if (newExtractionBtn) {
             newExtractionBtn.addEventListener('click', () => this.resetForm());
         }
-        if (toggleViewBtn) {
-            toggleViewBtn.addEventListener('click', () => this.toggleView());
-        }
         if (downloadAllBtn) {
             downloadAllBtn.addEventListener('click', () => this.downloadAll());
         }
-        if (optionsToggle) {
-            optionsToggle.addEventListener('click', () => this.toggleOptions());
-        }
-        if (clearChatBtn) {
-            clearChatBtn.addEventListener('click', () => this.clearChat());
-        }
 
         // Settings
-        document.querySelectorAll('.setting-item input, .setting-item select').forEach(input => {
+        document.querySelectorAll('.advanced-input, .advanced-select').forEach(input => {
             input.addEventListener('change', (e) => this.saveSetting(e.target.id, e.target.value));
         });
 
-        // Initialize
-        this.updateHistoryDisplay();
+        // Initialize with saved settings
+        this.initializeSettings();
+    }
+
+    initializeSettings() {
+        // Apply saved settings to all form elements
+        Object.keys(this.settings).forEach(key => {
+            const element = document.getElementById(key);
+            if (element) {
+                element.value = this.settings[key];
+            }
+        });
     }
 
     async handleExtractSubmit(event) {
@@ -77,6 +124,7 @@ class ImageExtractorApp {
     async extractImages(url) {
         const startTime = Date.now();
         this.showLoadingOverlay(true);
+        this.initializeRealTimePreview();
         this.hideResults();
 
         try {
@@ -89,20 +137,6 @@ class ImageExtractorApp {
             const visualAnalysis = document.getElementById('visualAnalysis').value === 'true';
             const followLinks = document.getElementById('followLinks').value === 'true';
 
-            const requestData = {
-                url: url,
-                outputDirectory: outputDirectory,
-                maxImages: maxImages,
-                aiProvider: aiMethod,
-                visualAnalysis: visualAnalysis,
-                followLinks: followLinks
-            };
-
-            console.log('📤 Enviando al backend:', requestData);
-            
-            // Update progress
-            this.updateProgress(20);
-            
             const payload = { 
                 url, 
                 maxImages: parseInt(maxImages), 
@@ -112,7 +146,11 @@ class ImageExtractorApp {
                 followLinks
             };
             
-            console.log('📦 Payload JSON:', JSON.stringify(payload, null, 2));
+            console.log('� Payload JSON:', JSON.stringify(payload, null, 2));
+            
+            // Show initial progress
+            this.updateProgress(10);
+            this.updateRealTimePreview('Conectando con el servidor...', 'loading');
             
             const response = await fetch('http://localhost:3000/image-extractor/extract', {
                 method: 'POST',
@@ -123,7 +161,8 @@ class ImageExtractorApp {
             });
 
             console.log('📡 Respuesta recibida:', response.status);
-            this.updateProgress(60);
+            this.updateProgress(30);
+            this.updateRealTimePreview('Analizando la página web...', 'loading');
 
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
@@ -131,7 +170,8 @@ class ImageExtractorApp {
 
             const result = await response.json();
             console.log('📊 Resultado del servidor:', result);
-            this.updateProgress(80);
+            this.updateProgress(70);
+            this.updateRealTimePreview('Organizando imágenes con IA...', 'loading');
             
             if (result.success) {
                 console.log('✅ Extracción exitosa, mostrando resultados...');
@@ -140,25 +180,121 @@ class ImageExtractorApp {
                 const processTime = ((Date.now() - startTime) / 1000).toFixed(1);
                 result.data.processTime = processTime;
                 
+                // Show preview of found images
+                this.updateRealTimePreview(
+                    `¡Listo! ${result.data.totalImages} imágenes encontradas en ${processTime}s`, 
+                    'success',
+                    result.data.categories
+                );
+                
+                this.updateProgress(90);
+                
                 // Add to history
                 this.addToHistory(url, result.data);
+                
+                // Small delay to show preview
+                await new Promise(resolve => setTimeout(resolve, 1500));
                 
                 this.displayResults(result.data);
                 this.showToast('¡Imágenes extraídas con éxito!', 'success');
                 this.updateProgress(100);
+                
+                // Hide preview after showing results
+                setTimeout(() => {
+                    this.hideRealTimePreview();
+                }, 2000);
+                
             } else {
                 console.error('❌ Error en la extracción:', result);
+                this.updateRealTimePreview(`Error: ${result.message}`, 'error');
                 throw new Error(result.message || 'Error en la extracción');
             }
 
         } catch (error) {
             console.error('💥 Error completo:', error);
+            this.updateRealTimePreview(`Error: ${error.message}`, 'error');
             this.showToast(`Error: ${error.message}`, 'error');
         } finally {
             setTimeout(() => {
                 this.showLoadingOverlay(false);
                 this.updateProgress(0);
-            }, 1000);
+                this.hideRealTimePreview();
+            }, 3000);
+        }
+    }
+
+    initializeRealTimePreview() {
+        // Create preview container if it doesn't exist
+        let previewContainer = document.getElementById('realTimePreview');
+        if (!previewContainer) {
+            previewContainer = document.createElement('div');
+            previewContainer.id = 'realTimePreview';
+            previewContainer.className = 'real-time-preview';
+            document.body.appendChild(previewContainer);
+        }
+        
+        previewContainer.style.display = 'block';
+        previewContainer.innerHTML = `
+            <div class="preview-content">
+                <div class="preview-header">
+                    <div class="preview-icon">
+                        <i class="fas fa-magic"></i>
+                    </div>
+                    <div class="preview-text">
+                        <h3>Extracción en progreso</h3>
+                        <p class="preview-status">Iniciando...</p>
+                    </div>
+                </div>
+                <div class="preview-progress">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="previewProgressFill"></div>
+                    </div>
+                </div>
+                <div class="preview-images" id="previewImages"></div>
+            </div>
+        `;
+    }
+
+    updateRealTimePreview(message, status = 'loading', categories = null) {
+        const previewStatus = document.querySelector('.preview-status');
+        const previewProgressFill = document.getElementById('previewProgressFill');
+        const previewImages = document.getElementById('previewImages');
+        
+        if (previewStatus) {
+            previewStatus.textContent = message;
+        }
+        
+        // Update status icon
+        const previewIcon = document.querySelector('.preview-icon i');
+        if (previewIcon) {
+            previewIcon.className = status === 'success' ? 'fas fa-check-circle' : 
+                                   status === 'error' ? 'fas fa-exclamation-circle' : 
+                                   'fas fa-spinner fa-spin';
+        }
+        
+        // Show preview images if available
+        if (categories && previewImages) {
+            previewImages.innerHTML = categories.slice(0, 3).map(category => `
+                <div class="preview-category">
+                    <div class="preview-category-header">
+                        <span class="category-icon">${this.getCategoryIcon(category.category)}</span>
+                        <span class="category-name">${this.getCategoryName(category.category)}</span>
+                        <span class="category-count">${category.images.length}</span>
+                    </div>
+                    <div class="preview-category-images">
+                        ${category.images.slice(0, 4).map(img => `
+                            <img src="${img.originalUrl}" alt="${img.filename}" loading="lazy">
+                        `).join('')}
+                    </div>
+                </div>
+            `).join('');
+        }
+    }
+
+    hideRealTimePreview() {
+        const previewContainer = document.getElementById('realTimePreview');
+        if (previewContainer) {
+            previewContainer.style.display = 'none';
         }
     }
 
@@ -211,44 +347,141 @@ class ImageExtractorApp {
 
         // Mostrar categorías en vista de grid
         categoriesGrid.innerHTML = data.categories.map(category => `
-            <div class="category">
-                <h3>
-                    <span class="category-icon">${this.getCategoryIcon(category.category)}</span>
-                    ${this.getCategoryName(category.category)}
-                    <span class="category-count">${category.images.length}</span>
-                    <button class="view-all-btn" onclick="app.showCategoryModal('${category.category}')">
-                        <i class="fas fa-expand"></i>
-                        Ver todas
-                    </button>
-                </h3>
-                <div class="images-grid">
-                    ${category.images.slice(0, 12).map(image => `
-                        <img 
-                            src="${image.originalUrl}" 
-                            alt="${image.filename}"
-                            class="image-thumb"
-                            onclick="window.open('${image.originalUrl}', '_blank')"
-                            title="${image.filename}"
-                            loading="lazy"
-                        >
+            <div class="category-card" onclick="app.downloadCategory('${category.category}')">
+                <div class="category-header">
+                    <div class="category-icon">${this.getCategoryIcon(category.category)}</div>
+                    <h3>${this.getCategoryName(category.category)}</h3>
+                </div>
+                <div class="category-stats">
+                    <span class="image-count">${category.images.length} imágenes</span>
+                </div>
+                <div class="category-preview">
+                    ${category.images.slice(0, 3).map(img => `
+                        <img src="${img.originalUrl}" alt="${img.filename}" loading="lazy" 
+                             onclick="event.stopPropagation(); app.showImagePreview('${img.originalUrl}', '${img.filename}', '${category.category}')">
                     `).join('')}
-                    ${category.images.length > 12 ? `
-                        <div class="more-images" onclick="app.showCategoryModal('${category.category}')">
-                            <span>+${category.images.length - 12}</span>
-                        </div>
-                    ` : ''}
+                </div>
+                <div class="category-actions">
+                    <button class="download-btn" onclick="event.stopPropagation(); app.downloadCategory('${category.category}')">
+                        <i class="fas fa-download"></i>
+                        Descargar URLs
+                    </button>
                 </div>
             </div>
         `).join('');
 
-        console.log('🎨 Categorías renderizadas:', data.categories.length, 'categorías');
+        // Vista de chat
+        if (chatMessages) {
+            chatMessages.innerHTML = `
+            <div class="chat-message system">
+                <strong>🎯 Extracción completada</strong><br>
+                <strong>URL:</strong> ${data.url}<br>
+                <strong>Imágenes encontradas:</strong> ${data.totalImages}<br>
+                <strong>Categorías:</strong> ${data.categories.length}<br>
+                <strong>Tiempo de procesamiento:</strong> ${data.processTime}s
+            </div>
+        `;
 
-        // Generar mensajes del chat
-        this.generateChatMessages(data);
-        this.generateFolderStructure(data);
+            data.categories.forEach(category => {
+            const message = `
+                <div class="chat-message system">
+                    <strong>${this.getCategoryIcon(category.category)} ${this.getCategoryName(category.category)}</strong><br>
+                    <strong>Imágenes:</strong> ${category.images.length}<br>
+                    <strong>Muestras:</strong><br>
+                    ${category.images.slice(0, 3).map(img => `
+                        <img src="${img.originalUrl}" alt="${img.filename}" style="max-width: 100px; margin: 2px; cursor: pointer;"
+                             onclick="app.showImagePreview('${img.originalUrl}', '${img.filename}', '${category.category}')">
+                    `).join('')}
+                </div>
+            `;
+                chatMessages.innerHTML += message;
+            });
+        }
 
         results.style.display = 'block';
         console.log('✅ Resultados mostrados exitosamente');
+    }
+
+    showImagePreview(imageUrl, filename, category) {
+        // Create modal if it doesn't exist
+        let modal = document.getElementById('imagePreviewModal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'imagePreviewModal';
+            modal.className = 'image-preview-modal';
+            document.body.appendChild(modal);
+        }
+
+        modal.innerHTML = `
+            <div style="max-width: 90vw; max-height: 90vh; position: relative; background: white; border-radius: 16px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25); overflow: hidden; animation: slideUp 0.3s ease-out;">
+                <img src="${imageUrl}" alt="${filename}" style="max-width: 100%; max-height: 70vh; object-fit: contain; display: block;" id="previewImage">
+                <button style="position: absolute; top: 16px; right: 16px; background: white; border: 1px solid #e5e7eb; width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 18px; color: #374151; transition: all 0.3s ease; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); z-index: 10;" onclick="app.hideImagePreview()">
+                    <i class="fas fa-times"></i>
+                </button>
+                <div style="padding: 24px; background: white; border-top: 1px solid #e5e7eb;">
+                    <div style="font-weight: 700; font-size: 18px; color: #6366f1; margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
+                        <i class="fas fa-image" style="color: #22d3ee; font-size: 16px;"></i>
+                        ${filename}
+                    </div>
+                    <div style="font-size: 14px; color: #6b7280; line-height: 1.6;">
+                        <div style="margin-bottom: 4px;">
+                            <i class="fas fa-folder" style="color: #22d3ee; font-size: 12px; margin-right: 6px;"></i>
+                            Categoría: ${this.getCategoryName(category)}
+                        </div>
+                        <div>
+                            <i class="fas fa-link" style="color: #22d3ee; font-size: 12px; margin-right: 6px;"></i>
+                            URL: ${imageUrl}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        modal.style.display = 'flex';
+        
+        // Add zoom functionality with mouse wheel
+        const img = document.getElementById('previewImage');
+        let scale = 1;
+        
+        const handleWheel = (e) => {
+            e.preventDefault();
+            const delta = e.deltaY > 0 ? 0.9 : 1.1;
+            scale *= delta;
+            scale = Math.min(Math.max(0.5, scale), 3);
+            img.style.transform = `scale(${scale})`;
+        };
+        
+        img.addEventListener('wheel', handleWheel);
+        
+        // Close on escape key
+        const handleEscape = (e) => {
+            if (e.key === 'Escape') {
+                this.hideImagePreview();
+            }
+        };
+        
+        document.addEventListener('keydown', handleEscape);
+        
+        // Store event listeners for cleanup
+        modal._wheelHandler = handleWheel;
+        modal._escapeHandler = handleEscape;
+    }
+
+    hideImagePreview() {
+        const modal = document.getElementById('imagePreviewModal');
+        if (modal) {
+            const img = document.getElementById('previewImage');
+            
+            // Remove event listeners
+            if (modal._wheelHandler && img) {
+                img.removeEventListener('wheel', modal._wheelHandler);
+            }
+            if (modal._escapeHandler) {
+                document.removeEventListener('keydown', modal._escapeHandler);
+            }
+            
+            modal.style.display = 'none';
+        }
     }
 
     // Navigation methods
@@ -316,7 +549,9 @@ class ImageExtractorApp {
     // Clear chat
     clearChat() {
         const chatMessages = document.getElementById('chatMessages');
-        chatMessages.innerHTML = '';
+        if (chatMessages) {
+            chatMessages.innerHTML = '';
+        }
         this.showToast('Chat limpiado', 'info');
     }
 
@@ -327,9 +562,19 @@ class ImageExtractorApp {
             return;
         }
         
-        this.showToast('Preparando descarga...', 'info');
-        // Implement download functionality
-        console.log('📥 Descargando todas las imágenes...');
+        this.showToast('Iniciando descarga de todas las imágenes...', 'info');
+        
+        let totalImages = 0;
+        this.currentExtraction.categories.forEach(category => {
+            category.images.forEach((image, index) => {
+                setTimeout(() => {
+                    this.downloadImage(image.originalUrl, image.filename, category.category);
+                }, totalImages * 200);
+                totalImages++;
+            });
+        });
+        
+        this.showToast(`Descargando ${totalImages} imágenes...`, 'success');
     }
 
     // Progress update
@@ -567,6 +812,33 @@ class ImageExtractorApp {
         }
     }
 
+    clearAllHistory() {
+        if (this.extractionHistory.length === 0) {
+            this.showToast('No hay historial que eliminar', 'info');
+            return;
+        }
+        
+        if (confirm(`¿Estás seguro de que quieres eliminar todo el historial (${this.extractionHistory.length} extracciones)? Esta acción no se puede deshacer.`)) {
+            this.extractionHistory = [];
+            this.saveHistory();
+            this.updateHistoryDisplay();
+            this.showToast('Todo el historial ha sido eliminado', 'success');
+        }
+    }
+
+    downloadImage(url, filename, category) {
+        // Create a temporary link element to trigger download
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `${category}/${filename}`;
+        link.target = '_blank';
+        link.style.display = 'none';
+        
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+
     // Modal methods
     showCategoryModal(categoryName) {
         if (!this.currentExtraction) return;
@@ -613,19 +885,12 @@ class ImageExtractorApp {
     downloadCategory() {
         if (!this.currentModalCategory) return;
         
-        this.showToast(`Preparando descarga de ${this.currentModalCategory.images.length} imágenes...`, 'info');
+        this.showToast(`Iniciando descarga de ${this.currentModalCategory.images.length} imágenes...`, 'info');
         
-        // Create a zip file or trigger individual downloads
         this.currentModalCategory.images.forEach((image, index) => {
             setTimeout(() => {
-                const link = document.createElement('a');
-                link.href = image.originalUrl;
-                link.download = image.filename;
-                link.target = '_blank';
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
-            }, index * 200); // Stagger downloads
+                this.downloadImage(image.originalUrl, image.filename, this.currentModalCategory.category);
+            }, index * 200);
         });
         
         this.showToast('Descarga iniciada', 'success');
@@ -706,7 +971,8 @@ class ImageExtractorApp {
 
     generateChatMessages(data) {
         const chatMessages = document.getElementById('chatMessages');
-        chatMessages.innerHTML = '';
+        if (chatMessages) {
+            chatMessages.innerHTML = '';
 
         // Mensaje de inicio
         this.addChatMessage('🤖 **Sistema**: Extracción completada exitosamente', 'system');
@@ -730,8 +996,9 @@ class ImageExtractorApp {
         });
 
         // Mensaje final
-        this.addChatMessage('🎯 **Ubicación**: Todas las imágenes están organizadas en la carpeta ./downloads/', 'system');
-        this.addChatMessage('💡 **Tip**: Puedes acceder a las imágenes directamente desde las carpetas de categoría', 'system');
+            this.addChatMessage('🎯 **Ubicación**: Todas las imágenes están organizadas en la carpeta ./downloads/', 'system');
+            this.addChatMessage('💡 **Tip**: Puedes acceder a las imágenes directamente desde las carpetas de categoría', 'system');
+        }
     }
 
     generateFolderStructure(data) {
@@ -756,15 +1023,22 @@ class ImageExtractorApp {
 
     addChatMessage(message, type = 'user') {
         const chatMessages = document.getElementById('chatMessages');
+        if (!chatMessages) return;
+        
         const messageDiv = document.createElement('div');
         messageDiv.className = `chat-message ${type}`;
         
-        if (type === 'system') {
-            messageDiv.innerHTML = message;
-        } else {
-            messageDiv.textContent = message;
-        }
+        // Parse markdown-like formatting
+        const formattedMessage = message
+            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+            .replace(/🤖\s*\*\*Sistema\*\*:/g, '🤖 <strong>Sistema:</strong>')
+            .replace(/✅\s*\*\*Resultado\*\*:/g, '✅ <strong>Resultado:</strong>')
+            .replace(/📁\s*\*\*Carpeta creada\*\*:/g, '📁 <strong>Carpeta creada:</strong>')
+            .replace(/📊\s*Contiene:/g, '📊 <strong>Contiene:</strong>')
+            .replace(/🎯\s*\*\*Ubicación\*\*:/g, '🎯 <strong>Ubicación:</strong>')
+            .replace(/💡\s*\*\*Tip\*\*:/g, '💡 <strong>Tip:</strong>');
         
+        messageDiv.innerHTML = formattedMessage;
         chatMessages.appendChild(messageDiv);
         chatMessages.scrollTop = chatMessages.scrollHeight;
     }

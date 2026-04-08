@@ -16,7 +16,7 @@ export class ImageCategoryService {
 
   constructor(private readonly configService: ConfigService) {}
 
-  async categorizeImages(images: DownloadedImage[], visualAnalysis: boolean = true): Promise<CategoryResult[]> {
+  async categorizeImages(images: DownloadedImage[], visualAnalysis: boolean = true, baseDirectory: string = './downloads'): Promise<CategoryResult[]> {
     this.logger.log(`Starting categorization of ${images.length} images (visual analysis: ${visualAnalysis})`);
     
     const categories: { [key: string]: DownloadedImage[] } = {};
@@ -80,7 +80,7 @@ export class ImageCategoryService {
     const results: CategoryResult[] = [];
     
     for (const [category, categoryImages] of Object.entries(categories)) {
-      const folderPath = await this.createCategoryFolder(category);
+      const folderPath = await this.createCategoryFolder(category, baseDirectory);
       await this.moveImagesToCategoryFolder(categoryImages, folderPath);
       
       results.push({
@@ -99,7 +99,7 @@ export class ImageCategoryService {
     }
 
     this.logger.log(`✅ Categorization complete: ${processedCount} images processed`);
-    this.logger.log(`� Analysis breakdown: ${aiAnalysisCount} AI-analyzed, ${heuristicCount} heuristic-based`);
+    this.logger.log(`🔍 Analysis breakdown: ${aiAnalysisCount} AI-analyzed, ${heuristicCount} heuristic-based`);
     this.logger.log(`📁 Created ${results.length} categories: ${Object.keys(categories).join(', ')}`);
     
     // Warn if too few categories were created
@@ -293,27 +293,127 @@ export class ImageCategoryService {
     return validCategories.includes(category) ? category : null;
   }
 
-  private async createCategoryFolder(category: string): Promise<string> {
-    const basePath = './downloads';
-    const categoryPath = path.join(basePath, category);
+  private async createCategoryFolder(category: string, baseDirectory: string = './downloads'): Promise<string> {
+    const categoryPath = path.join(baseDirectory, category);
     
     if (!fs.existsSync(categoryPath)) {
       fs.mkdirSync(categoryPath, { recursive: true });
+      this.logger.log(`📁 Created category folder: ${categoryPath}`);
     }
+    
+    // Create subcategories based on the main category
+    await this.createSubcategories(category, categoryPath);
     
     return categoryPath;
   }
 
+  private async createSubcategories(category: string, categoryPath: string): Promise<void> {
+    const subcategories = this.getSubcategories(category);
+    
+    for (const subcategory of subcategories) {
+      const subcategoryPath = path.join(categoryPath, subcategory);
+      if (!fs.existsSync(subcategoryPath)) {
+        fs.mkdirSync(subcategoryPath, { recursive: true });
+        this.logger.log(`📁 Created subcategory folder: ${subcategoryPath}`);
+      }
+    }
+  }
+
+  private getSubcategories(category: string): string[] {
+    const subcategoryMap: { [key: string]: string[] } = {
+      'people': ['portraits', 'groups', 'actions', 'candid'],
+      'nature': ['landscapes', 'animals', 'plants', 'flowers', 'trees', 'water'],
+      'objects': ['furniture', 'tools', 'decorations', 'products', 'household'],
+      'architecture': ['buildings', 'interiors', 'rooms', 'exteriors', 'structures'],
+      'food': ['meals', 'ingredients', 'drinks', 'desserts', 'cooking'],
+      'technology': ['devices', 'computers', 'phones', 'electronics', 'gadgets'],
+      'art': ['paintings', 'drawings', 'digital', 'abstract', 'patterns'],
+      'other': ['miscellaneous', 'unclassified']
+    };
+    
+    return subcategoryMap[category] || [];
+  }
+
   private async moveImagesToCategoryFolder(images: DownloadedImage[], folderPath: string): Promise<void> {
     for (const image of images) {
-      const newPath = path.join(folderPath, image.filename);
+      // Determine subcategory based on image analysis
+      const subcategory = await this.determineSubcategory(image, path.basename(folderPath));
+      const targetFolder = subcategory ? path.join(folderPath, subcategory) : folderPath;
+      
+      const newPath = path.join(targetFolder, image.filename);
       
       try {
+        // Ensure target folder exists
+        if (!fs.existsSync(targetFolder)) {
+          fs.mkdirSync(targetFolder, { recursive: true });
+        }
+        
         await fs.promises.rename(image.localPath, newPath);
         image.localPath = newPath;
+        image.category = path.basename(folderPath);
+        
+        this.logger.log(`📁 Moved ${image.filename} to ${targetFolder}`);
       } catch (error) {
-        this.logger.error(`Failed to move ${image.filename} to ${folderPath}: ${error.message}`);
+        this.logger.error(`Failed to move ${image.filename} to ${targetFolder}: ${error.message}`);
       }
+    }
+  }
+
+  private async determineSubcategory(image: DownloadedImage, category: string): Promise<string | null> {
+    const filename = image.filename.toLowerCase();
+    const url = image.originalUrl.toLowerCase();
+    
+    switch (category) {
+      case 'people':
+        if (this.containsKeywords([filename, url], ['portrait', 'face', 'headshot'])) return 'portraits';
+        if (this.containsKeywords([filename, url], ['group', 'team', 'family', 'crowd'])) return 'groups';
+        if (this.containsKeywords([filename, url], ['action', 'running', 'jumping', 'walking'])) return 'actions';
+        return 'candid';
+        
+      case 'nature':
+        if (this.containsKeywords([filename, url], ['landscape', 'mountain', 'valley', 'horizon'])) return 'landscapes';
+        if (this.containsKeywords([filename, url], ['animal', 'pet', 'wildlife', 'bird'])) return 'animals';
+        if (this.containsKeywords([filename, url], ['plant', 'leaf', 'tree', 'forest'])) return 'plants';
+        if (this.containsKeywords([filename, url], ['flower', 'bloom', 'petal', 'rose'])) return 'flowers';
+        if (this.containsKeywords([filename, url], ['water', 'ocean', 'sea', 'river', 'lake'])) return 'water';
+        return 'landscapes';
+        
+      case 'objects':
+        if (this.containsKeywords([filename, url], ['furniture', 'chair', 'table', 'sofa', 'bed'])) return 'furniture';
+        if (this.containsKeywords([filename, url], ['tool', 'hammer', 'drill', 'screwdriver'])) return 'tools';
+        if (this.containsKeywords([filename, url], ['decoration', 'ornament', 'vase', 'frame'])) return 'decorations';
+        if (this.containsKeywords([filename, url], ['product', 'item', 'package', 'box'])) return 'products';
+        return 'household';
+        
+      case 'architecture':
+        if (this.containsKeywords([filename, url], ['building', 'tower', 'skyscraper', 'office'])) return 'buildings';
+        if (this.containsKeywords([filename, url], ['interior', 'room', 'inside', 'indoor'])) return 'interiors';
+        if (this.containsKeywords([filename, url], ['exterior', 'outside', 'outdoor', 'facade'])) return 'exteriors';
+        return 'structures';
+        
+      case 'food':
+        if (this.containsKeywords([filename, url], ['meal', 'dish', 'plate', 'serving'])) return 'meals';
+        if (this.containsKeywords([filename, url], ['ingredient', 'raw', 'fresh', 'vegetable'])) return 'ingredients';
+        if (this.containsKeywords([filename, url], ['drink', 'beverage', 'juice', 'coffee', 'tea'])) return 'drinks';
+        if (this.containsKeywords([filename, url], ['dessert', 'cake', 'pie', 'sweet', 'candy'])) return 'desserts';
+        return 'cooking';
+        
+      case 'technology':
+        if (this.containsKeywords([filename, url], ['device', 'gadget', 'machine'])) return 'devices';
+        if (this.containsKeywords([filename, url], ['computer', 'laptop', 'pc', 'desktop'])) return 'computers';
+        if (this.containsKeywords([filename, url], ['phone', 'mobile', 'smartphone', 'iphone'])) return 'phones';
+        if (this.containsKeywords([filename, url], ['electronic', 'circuit', 'chip', 'board'])) return 'electronics';
+        return 'gadgets';
+        
+      case 'art':
+        if (this.containsKeywords([filename, url], ['painting', 'canvas', 'oil', 'watercolor'])) return 'paintings';
+        if (this.containsKeywords([filename, url], ['drawing', 'sketch', 'pencil', 'pen'])) return 'drawings';
+        if (this.containsKeywords([filename, url], ['digital', 'computer', 'generated'])) return 'digital';
+        if (this.containsKeywords([filename, url], ['abstract', 'geometric', 'pattern'])) return 'abstract';
+        return 'patterns';
+        
+      default:
+        return 'miscellaneous';
     }
   }
 }

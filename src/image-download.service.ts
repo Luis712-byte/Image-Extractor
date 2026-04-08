@@ -12,6 +12,7 @@ export interface DownloadedImage {
   format: string;
   width?: number;
   height?: number;
+  category?: string;
 }
 
 @Injectable()
@@ -57,6 +58,53 @@ export class ImageDownloadService {
     this.logger.log(`   Final count: ${downloadedImages.length}`);
     
     return downloadedImages;
+  }
+
+  async downloadImagesToCategories(imageUrls: string[], baseDirectory: string): Promise<{ [category: string]: DownloadedImage[] }> {
+    this.logger.log(`🚀 Starting download of ${imageUrls.length} images to category folders in ${baseDirectory}`);
+    
+    if (!fs.existsSync(baseDirectory)) {
+      fs.mkdirSync(baseDirectory, { recursive: true });
+    }
+
+    const categorizedImages: { [category: string]: DownloadedImage[] } = {};
+    let successCount = 0;
+    let failCount = 0;
+    let invalidCount = 0;
+    
+    for (let i = 0; i < imageUrls.length; i++) {
+      const imageUrl = imageUrls[i];
+      try {
+        this.logger.log(`⬇️ [${i + 1}/${imageUrls.length}] Attempting: ${imageUrl}`);
+        
+        // Download image to temp location first
+        const tempImageData = await this.downloadSingleImage(imageUrl, baseDirectory);
+        if (tempImageData) {
+          successCount++;
+          this.logger.log(`✅ Success: ${tempImageData.filename} (${tempImageData.size} bytes, ${tempImageData.format})`);
+          
+          // Will be categorized and moved later by category service
+          if (!categorizedImages['temp']) {
+            categorizedImages['temp'] = [];
+          }
+          categorizedImages['temp'].push(tempImageData);
+        } else {
+          invalidCount++;
+          this.logger.warn(`⚠️ Invalid content type for: ${imageUrl}`);
+        }
+      } catch (error) {
+        failCount++;
+        this.logger.error(`❌ Failed to download ${imageUrl}: ${error.message}`);
+      }
+    }
+    
+    this.logger.log(`📊 Download summary:`);
+    this.logger.log(`   Total URLs: ${imageUrls.length}`);
+    this.logger.log(`   Successful: ${successCount}`);
+    this.logger.log(`   Failed: ${failCount}`);
+    this.logger.log(`   Invalid content: ${invalidCount}`);
+    
+    return categorizedImages;
   }
 
   private async downloadSingleImage(url: string, outputDirectory: string): Promise<DownloadedImage | null> {
